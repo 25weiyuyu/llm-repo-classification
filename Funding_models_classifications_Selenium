@@ -1,0 +1,129 @@
+import time
+import pandas as pd
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+# Path to ChromeDriver
+chromedriver_path = "/Users/winniewei/Downloads/chromedriver-mac-arm64/chromedriver"  # Update with your actual path
+
+chrome_profile_path = "/Users/winniewei/Library/Application Support/Google/Chrome/Default"  # Update with your profile path
+
+# Configure Chrome options
+chrome_options = Options()
+chrome_options.add_argument(f"--user-data-dir={chrome_profile_path}")  # Load existing profile
+chrome_options.add_argument("--profile-directory=Profile 1")  # Use the 'Default' profile
+
+# Initialize WebDriver
+driver = webdriver.Chrome(service=Service(chromedriver_path), options=chrome_options)
+
+# Open ChatGPT or any website
+driver.get("https://chat.openai.com/")
+# Read Excel input with error handling
+try:
+    input_file = "/Users/winniewei/Downloads/Projects_testingAI.xlsx"
+    df = pd.read_excel(input_file)
+except FileNotFoundError:
+    print(f"Error: Input file not found at {input_file}")
+    exit()
+except Exception as e:
+    print(f"Error reading input file: {e}")
+    exit()
+
+# Output DataFrame
+results = []
+
+try:
+    # Open ChatGPT's web interface
+    driver.get("https://chat.openai.com/")
+
+    # Wait for login and handle it manually if necessary
+    print("Please log in to ChatGPT manually if prompted.")
+    WebDriverWait(driver, 120).until(
+        EC.presence_of_element_located((By.XPATH, "//textarea[@placeholder='Send a message']"))
+    )
+    print("Login successful.")
+
+    # Process each project
+    for _, row in df.iterrows():
+        try:
+            project_name = row.iloc[0]
+            github_link = row.iloc[1]
+
+            # Create prompt
+            prompt = f"""Please classify the project's funding model based on its GitHub repository, white paper, CoinMarketCap, and official website (if available). 
+            Respond in the following format (include only applicable funding models):
+            - Public Token Sale: [Yes/No]
+            - Product/Service Sales Income: [Yes/No]
+            - Donations: [Yes/No]
+            - Crowdfunding Without Token: [Yes/No]
+
+            Project: {project_name}
+            Link: {github_link}
+            """
+
+            # Locate the input box and send the prompt
+            input_box = WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.XPATH, "//textarea[@placeholder='Send a message']"))
+            )
+            input_box.send_keys(prompt)
+            input_box.send_keys(Keys.RETURN)
+
+            # Wait for the response
+            WebDriverWait(driver, 30).until(
+                EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class,'message') and contains(@class,'assistant')]"))
+            )
+            responses = driver.find_elements(By.XPATH, "//div[contains(@class,'message') and contains(@class,'assistant')]")
+
+            # Extract and process the response
+            response = responses[-1].text if responses else "No response"
+            funding_models = {
+                "Public Token Sale": 0,
+                "Crowdfunding Without Token": 0,
+                "Product/Service Sales Income": 0,
+                "Donations": 0
+            }
+
+            for model in funding_models.keys():
+                if f"{model}: Yes" in response:
+                    funding_models[model] = 1
+
+            # Append results
+            results.append({
+                "Project Name": project_name,
+                "GitHub Link": github_link,
+                "Public Token Sale": funding_models["Public Token Sale"],
+                "Crowdfunding Without Token": funding_models["Crowdfunding Without Token"],
+                "Product/Service Sales Income": funding_models["Product/Service Sales Income"],
+                "Donations": funding_models["Donations"],
+            })
+
+            # Delay to avoid overwhelming the server
+            time.sleep(5)
+
+        except Exception as e:
+            print(f"Error processing project {project_name}: {e}")
+            results.append({
+                "Project Name": project_name,
+                "GitHub Link": github_link,
+                "Public Token Sale": 0,
+                "Crowdfunding Without Token": 0,
+                "Product/Service Sales Income": 0,
+                "Donations": 0,
+            })
+
+    # Save results to Excel
+    try:
+        output_file = "/Users/winniewei/Downloads/automatic_models.xlsx"
+        output_df = pd.DataFrame(results)
+        output_df.to_excel(output_file, index=False)
+        print(f"Output saved to {output_file}")
+    except Exception as e:
+        print(f"Error saving output file: {e}")
+
+finally:
+    driver.quit()
